@@ -1,0 +1,152 @@
+CREATE DATABASE IOT_DB;
+
+CREATE SCHEMA IOT_DB.IOT_SCHEMA;
+
+CREATE WAREHOUSE IOT_WH;
+
+USE IOT_DB.IOT_SCHEMA;
+
+CREATE TABLE DEVICE (
+    deviceId STRING,
+    deviceName STRING,
+    deviceType STRING,
+    installationLocation STRING,
+    deviceStatus STRING
+);
+CREATE TABLE SENSOR (
+    sensorId STRING,
+    deviceId STRING,
+    sensorType STRING,
+    measurementUnit STRING,
+    operationalStatus STRING
+);
+CREATE TABLE TELEMETRY (
+    telemetryId STRING,
+    deviceId STRING,
+    telemetryJson VARIANT,
+    recordedAt TIMESTAMP,
+    telemetryStatus STRING
+);
+CREATE TABLE MAINTENANCE (
+    maintenanceId STRING,
+    deviceId STRING,
+    maintenanceDate DATE,
+    maintenanceType STRING,
+    maintenanceStatus STRING
+);
+CREATE TABLE DEVICE_ALERT (
+    alertId STRING,
+    deviceId STRING,
+    alertReason STRING,
+    severityScore INT,
+    alertStatus STRING
+);
+
+
+USE IOT_DB.IOT_SCHEMA;
+
+SELECT * FROM DEVICE;
+SELECT * FROM TELEMETRY;
+
+SELECT 
+    d.deviceName,
+    d.deviceType,
+    COUNT(t.telemetryId) AS total_records
+FROM TELEMETRY t
+JOIN DEVICE d 
+ON t.deviceId = d.deviceId
+GROUP BY d.deviceName, d.deviceType;
+
+SELECT 
+    deviceId,
+    AVG(telemetryJson:temperature::FLOAT) AS avg_temperature
+FROM TELEMETRY
+GROUP BY deviceId;
+
+SELECT 
+    telemetryJson:temperature::FLOAT AS temperature,
+    telemetryJson:humidity::FLOAT AS humidity,
+    telemetryJson:pressure::FLOAT AS pressure
+FROM TELEMETRY;
+
+SELECT *
+FROM TELEMETRY
+WHERE telemetryJson:temperature > 80;
+
+SELECT 
+    deviceId,
+    COUNT(*) AS alert_count
+FROM DEVICE_ALERT
+GROUP BY deviceId;
+
+CREATE VIEW DEVICE_PERFORMANCE AS
+SELECT 
+    deviceId,
+    AVG(telemetryJson:temperature::FLOAT) AS avg_temp
+FROM TELEMETRY
+GROUP BY deviceId;
+
+
+CREATE STREAM telemetry_stream 
+ON TABLE TELEMETRY;
+
+CREATE TASK telemetry_task
+WAREHOUSE = IOT_WH
+AS
+SELECT * FROM telemetry_stream;
+
+
+CREATE STAGE my_stage;
+
+CREATE FILE FORMAT my_csv_format
+TYPE = 'CSV'
+SKIP_HEADER = 1
+FIELD_OPTIONALLY_ENCLOSED_BY = '"';
+
+CREATE TABLE FACT_TELEMETRY AS
+SELECT 
+    t.telemetryId,
+    t.deviceId,
+    t.recordedAt,
+    t.telemetryJson:temperature::FLOAT AS temperature,
+    t.telemetryJson:humidity::FLOAT AS humidity,
+    t.telemetryJson:pressure::FLOAT AS pressure
+FROM TELEMETRY t;
+
+CREATE TABLE DIM_DEVICE AS
+SELECT DISTINCT deviceId, deviceName, deviceType
+FROM DEVICE;
+
+SELECT telemetryId, COUNT(*)
+FROM TELEMETRY
+GROUP BY telemetryId
+HAVING COUNT(*) > 1;
+
+SELECT *
+FROM TELEMETRY t
+JOIN DEVICE d ON t.deviceId = d.deviceId
+WHERE d.deviceStatus = 'INACTIVE';
+
+CREATE ROLE analyst;
+
+GRANT SELECT ON ALL TABLES IN SCHEMA IOT_SCHEMA TO ROLE analyst;
+
+COPY INTO IOT_DB.IOT_SCHEMA.DEVICE
+FROM @my_stage/device.csv
+FILE_FORMAT = my_csv_format;
+
+COPY INTO IOT_DB.IOT_SCHEMA.SENSOR
+FROM @my_stage/sensor.csv
+FILE_FORMAT = my_csv_format;
+
+COPY INTO IOT_DB.IOT_SCHEMA.TELEMETRY
+FROM @my_stage/telemetry.csv
+FILE_FORMAT = my_csv_format;
+
+COPY INTO IOT_DB.IOT_SCHEMA.MAINTENANCE
+FROM @my_stage/maintenance.csv
+FILE_FORMAT = my_csv_format;
+
+COPY INTO IOT_DB.IOT_SCHEMA.DEVICE_ALERT
+FROM @my_stage/device_alert.csv
+FILE_FORMAT = my_csv_format;
